@@ -1,6 +1,6 @@
 /**
  * @file tuya_app_main.c
- * @brief Entry for WS2812B strip 消消乐 on T5-E1
+ * @brief Entry for WS2812B strip shooter on T5-E1
  */
 
 #include "tal_api.h"
@@ -9,14 +9,10 @@
 #include "board_com_api.h"
 #include "game_xiaoxiaole.h"
 
-/***********************************************************
-***********************variable define**********************
-***********************************************************/
+#define TICK_MS 10
+
 static PIXEL_HANDLE_T sg_pixels = NULL;
 
-/***********************************************************
-***********************function define**********************
-***********************************************************/
 static void user_main(void)
 {
     OPERATE_RET rt = OPRT_OK;
@@ -24,20 +20,15 @@ static void user_main(void)
     tal_log_init(TAL_LOG_LEVEL_DEBUG, 2048, (TAL_LOG_OUTPUT_CB)tkl_log_output);
 
     PR_NOTICE("==========================================");
-    PR_NOTICE(" WS2812B 消消乐  |  T5-E1");
+    PR_NOTICE(" WS2812B 射击消消乐  |  T5-E1");
     PR_NOTICE("==========================================");
-    PR_NOTICE("Project name:        %s", PROJECT_NAME);
-    PR_NOTICE("App version:         %s", PROJECT_VERSION);
-    PR_NOTICE("Compile time:        %s", __DATE__);
-    PR_NOTICE("TuyaOpen version:    %s", OPEN_VERSION);
-    PR_NOTICE("Platform board:      %s", PLATFORM_BOARD);
-    PR_NOTICE("Strip LEDs:          %d", STRIP_LED_COUNT);
+    PR_NOTICE("Project: %s  ver %s", PROJECT_NAME, PROJECT_VERSION);
     PR_NOTICE("DIN=P4  R=P44  G=P45  B=P46");
-    PR_NOTICE("Short-press: clear that color (len>=2)");
-    PR_NOTICE("Long-press:  restart");
+    PR_NOTICE("LED0-2 flame | LED3..N-1 playfield");
+    PR_NOTICE("Short: shoot color | Long(idle): LED len 150..300/30");
+    PR_NOTICE("Any key after win/lose: restart");
     PR_NOTICE("==========================================");
 
-    /* T5AI_MODULE has no onboard peripherals; safe no-op */
     board_register_hardware();
 
     rt = game_hw_init(&sg_pixels);
@@ -52,27 +43,40 @@ static void user_main(void)
         return;
     }
 
-    game_reset(sg_pixels);
+    game_reset();
 
     while (1) {
         BTN_EVT_E evt = game_consume_button_event();
-        switch (evt) {
-        case BTN_EVT_RED:
-            game_handle_press(sg_pixels, CELL_RED);
-            break;
-        case BTN_EVT_GREEN:
-            game_handle_press(sg_pixels, CELL_GREEN);
-            break;
-        case BTN_EVT_BLUE:
-            game_handle_press(sg_pixels, CELL_BLUE);
-            break;
-        case BTN_EVT_RESTART:
-            game_reset(sg_pixels);
-            break;
-        default:
-            break;
+        const GAME_STATE_T *st = game_get_state();
+
+        if (st->game_over) {
+            if (evt == BTN_EVT_LONG) {
+                game_cycle_led_count(&sg_pixels);
+            } else if (evt != BTN_EVT_NONE) {
+                game_reset();
+            }
+        } else {
+            switch (evt) {
+            case BTN_EVT_RED:
+                game_shoot(GAME_COLOR_RED);
+                break;
+            case BTN_EVT_GREEN:
+                game_shoot(GAME_COLOR_GREEN);
+                break;
+            case BTN_EVT_BLUE:
+                game_shoot(GAME_COLOR_BLUE);
+                break;
+            case BTN_EVT_LONG:
+                /* in-game long-press also restarts */
+                game_reset();
+                break;
+            default:
+                break;
+            }
         }
-        tal_system_sleep(20);
+
+        game_tick(sg_pixels, TICK_MS);
+        tal_system_sleep(TICK_MS);
     }
 }
 
@@ -91,7 +95,6 @@ static void tuya_app_thread(void *arg)
 {
     (void)arg;
     user_main();
-
     tal_thread_delete(ty_app_thread);
     ty_app_thread = NULL;
 }
@@ -99,7 +102,7 @@ static void tuya_app_thread(void *arg)
 void tuya_app_main(void)
 {
     THREAD_CFG_T thrd_param = {0};
-    thrd_param.stackDepth = 1024 * 6;
+    thrd_param.stackDepth = 1024 * 8;
     thrd_param.priority = THREAD_PRIO_1;
     thrd_param.thrdname = "tuya_app_main";
     tal_thread_create_and_start(&ty_app_thread, NULL, NULL, tuya_app_thread, NULL, &thrd_param);
